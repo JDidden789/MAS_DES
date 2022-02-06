@@ -8,6 +8,7 @@ import random
 from collections import defaultdict
 from functools import partial
 from pathos.multiprocessing import ProcessingPool as Pool
+from matplotlib import pyplot as plt, rcParams
 
 import numpy as np
 import pandas as pd
@@ -193,7 +194,7 @@ def choose_job_queue(weights_new_job, machinenumber, processing_time, due_date, 
 
 
 def machine_processing(job_shop, current_WC, machine_number, env, weights_new, last_job, machine,
-                       makespan, min_job, max_job, normalization, max_wip):
+                       makespan, min_job, max_job, normalization, max_wip, machine_res):
     """This refers to a Machine Agent in the system. It checks which jobs it wants to process
     next and stores relevant information regarding it."""
     while True:
@@ -226,7 +227,8 @@ def machine_processing(job_shop, current_WC, machine_number, env, weights_new, l
             last_job[relative_machine] = next_job.type
 
             machine.items.remove(next_job)  # Remove job from queue
-            yield env.timeout(time_in_processing)
+            yield env.process(machine_proc_res(machine_res, time_in_processing, env))
+            # yield env.timeout(time_in_processing)
             next_workstation(next_job, job_shop, env, min_job, max_job, max_wip)  # Send the job to the next workstation
         else:
             yield job_shop.condition_flag[
@@ -234,14 +236,22 @@ def machine_processing(job_shop, current_WC, machine_number, env, weights_new, l
             job_shop.condition_flag[(relative_machine, current_WC - 1)] = simpy.Event(env)  # Reset event if it is used
 
 
+def machine_proc_res(machine_resource, time_in_processing, env):
+    with machine_resource.request() as req:
+        yield req
+        yield env.timeout(time_in_processing)
+
+
 def cfp_wc(env, machine, store, job_shop, currentWC, normalization):
     """Sends out the Call-For-Proposals to the various machines.
     Represents the Job-Pool_agent"""
     while True:
         if store.items:
-            job_shop.QueuesWC[currentWC].append(
-                {ii: len(job_shop.machine_per_wc[(ii, currentWC)].items) for ii in
-                 range(machinesPerWC[currentWC])})  # Stores the Queue length of the JPA
+            for ii in range(machinesPerWC[currentWC]):
+                job_shop.QueuesWC[currentWC][ii].append((len(job_shop.machine_per_wc[(ii, currentWC)].items)))
+
+                # {ii: len(job_shop.machine_per_wc[(ii, currentWC)].items) for ii in
+                #  range(machinesPerWC[currentWC])})  # Stores the Queue length of the JPA
             c = bid_winner(env, store.items, machinesPerWC[currentWC], currentWC + 1, job_shop,
                            machine, store, normalization)
             env.process(c)
@@ -275,8 +285,11 @@ class jobShop:
     def __init__(self, env, weights_new):
         self.machine_per_wc = {(ii, jj): Store(env) for jj in noOfWC for ii in
                                range(machinesPerWC[jj])}  # Used to store jobs in a machine
+        self.machine_process = {(ii, jj): Resource(env) for jj in noOfWC for ii in
+                                range(machinesPerWC[jj])}  # Used to store jobs in a machine
         self.storeWC = {ii: FilterStore(env) for ii in noOfWC}  # Used to store jobs in a JPA
-        self.QueuesWC = {jj: [] for jj in noOfWC}  # Can be used to keep track of Queue Lenghts
+        self.QueuesWC = {jj: {ii: [] for ii in
+                         range(machinesPerWC[jj])} for jj in noOfWC}  # Can be used to keep track of Queue Lengths
         self.scheduleWC = {ii: [] for ii in noOfWC}  # Used to keep track of the schedule
         self.makespanWC = {ii: np.zeros(machinesPerWC[ii]) for ii in
                            noOfWC}  # Keeps track of the makespan of each machine
@@ -403,16 +416,23 @@ def do_simulation_with_weights(mean_weight_new, arrivalMean, due_date_tightness,
 
         for ii in range(machinesPerWC[wc]):
             machine = job_shop.machine_per_wc[(ii, wc)]
+            machine_res = job_shop.machine_process[(ii, wc)]
 
             env.process(
                 machine_processing(job_shop, wc + 1, machine_number_WC[wc][ii], env, mean_weight_new, last_job,
-                                   machine, makespanWC, min_job, max_job, normalization, max_wip))
+                                   machine, makespanWC, min_job, max_job, normalization, max_wip, machine_res))
     job_shop.end_event = env.event()
 
     env.run(until=job_shop.end_event)  # Run the simulation until the end event gets triggered
 
     makespan, flow_time, mean_tardiness, max_tardiness, no_tardy_jobs_p1, no_tardy_jobs_p2, no_tardy_jobs_p3, mean_WIP, early_term = get_objectives(
         job_shop, min_job, max_job, job_shop.early_termination)  # Gather all results
+
+    print(job_shop.QueuesWC[0])
+    fig = plt.figure()
+    ax = fig.add_subplot(111)
+    ax.plot(job_shop.QueuesWC[0][0])
+    plt.show()
 
     return makespan, flow_time, mean_tardiness, max_tardiness, no_tardy_jobs_p1, no_tardy_jobs_p2, no_tardy_jobs_p3, mean_WIP, early_term
 
@@ -433,14 +453,14 @@ if __name__ == '__main__':
     final_obj = []
     final_std = []
 
-    no_runs = 100
-    no_processes = 50  # Change dependent on number of threads computer has, be sure to leave 1 thread remaining
+    no_runs = 1
+    no_processes = 1  # Change dependent on number of threads computer has, be sure to leave 1 thread remaining
     final_result = np.zeros((no_runs, 9))
     results = []
 
     for i in range(3, 4):
-        str1 = "Runs/Attribute_Runs/90-6/Run-weights-" + str(utilization[i]) + "-" + str(
-            due_date_settings[i]) + "-1000-[7, 7]-[3, 3]-Relearn" + ".csv"
+        str1 = "Runs/Final_Runs/Run-weights-" + str(utilization[i]) + "-" + str(
+            due_date_settings[i]) + ".csv"
         df = pd.read_csv(str1, header=None)
         weights = df.values.tolist()
         print("Current run is: " + str(utilization[i]) + "-" + str(due_date_settings[i]))
@@ -458,11 +478,9 @@ if __name__ == '__main__':
         results.append(list(np.mean(final_result, axis=0)))
         print(results)
     #
-    results = pd.DataFrame(results,
-                           columns=['Makespan', 'Mean Flow Time', 'Mean Weighted Tardiness', 'Max Weighted Tardiness',
-                                    'No. Tardy Jobs P1', 'No. Tardy Jobs P2', 'No. Tardy Jobs P3', 'Mean WIP',
-                                    'Early_Term'])
-    file_name = f"Results/Custom_3.csv"
-    results.to_csv(file_name)
-
-    # arrival_time = [1.5429, 1.5429, 1.5429, 1.4572, 1.4572, 1.4572, 1.3804, 1.3804, 1.3804]
+    # results = pd.DataFrame(results,
+    #                        columns=['Makespan', 'Mean Flow Time', 'Mean Weighted Tardiness', 'Max Weighted Tardiness',
+    #                                 'No. Tardy Jobs P1', 'No. Tardy Jobs P2', 'No. Tardy Jobs P3', 'Mean WIP',
+    #                                 'Early_Term'])
+    # file_name = f"Results/Custom_3.csv"
+    # results.to_csv(file_name)

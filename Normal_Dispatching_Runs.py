@@ -164,21 +164,11 @@ def job_seq(job, env, k, choice, setuptime):
                                                      j.dueDate[j.numberOfOperations] - env.now))
             # WCOVERT
             elif choice == 8:
-                # n = j.dueDate[j.currentOperation] - k * (remain_processing_time(j)) - setup_time
-                # u = j.dueDate[j.currentOperation] - j.processingTime[j.currentOperation - 1] - setup_time
-                # if env.now >= u:
-                #     c_i = 1
-                # elif (n <= env.now) & (env.now < u):
-                #     c_i = (env.now - n) / (u - n)
-                # else:
-                #     c_i = 0
                 c_i = j.priority / j.processingTime[j.currentOperation - 1] * max(0, 1 - max(0, j.dueDate[
                     j.numberOfOperations] - env.now - remain_processing_time(j)) / (k * remain_processing_time(j) -
                                                                                     j.processingTime[
                                                                                         j.currentOperation - 1] - setup_time))
-                # print(c_i)
                 priority.append(c_i)
-                # priority.append(j.priority * c_i / j.processingTime[j.currentOperation - 1])
             else:
                 prio = bid_calulculation_other(len(job), 1, np.mean(setuptime), meanProcTime, meanDueDate, maxDueDate,
                                                minDueDate, j.dueDate[j.numberOfOperations], j.processingTime[
